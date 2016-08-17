@@ -1,4 +1,4 @@
-use nom::{alpha, space, IResult, hex_digit, digit};
+use nom::{alpha, space, IResult, hex_digit, digit, eof};
 use std::str::FromStr;
 
 use chip8::instruction::{Src, Dest};
@@ -11,10 +11,8 @@ pub fn parse(input: &str) -> Vec<OctoFragment> {
 
     let w: IResult<&str, Vec<OctoFragment>> = parse.program(input).1; //program is a nom function
 
-    println!("Total Lines: {}", parse.line_count() );
-
     if let IResult::Done(x, result) = w {
-         println!("Done: x: {:?} result: {:?}", x, result);
+         //println!("Done: x: {:?} result: {:?}", x, result);
          result
     } else {
         match w {
@@ -74,6 +72,8 @@ pub enum OctoStatement {
     Assignment(OctoAssignment),
 }
 
+
+//Fragment should be a struct, it is hard to get the line number as enum
 #[derive(Debug, PartialEq)]
 pub enum OctoFragment {
     Comment(LineNumber, String),
@@ -83,6 +83,7 @@ pub enum OctoFragment {
     Label(LineNumber, String),
     Literal(LineNumber, isize),
     Statement(LineNumber, OctoStatement),
+    Call(LineNumber, OctoDest)
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -110,6 +111,16 @@ impl OctoParser {
             | call_m!(self.newline)
         )
     );
+
+
+    method!(pub empty_comment<OctoParser, &str, OctoFragment>, self,
+        chain!(
+            tag_s!("#")
+            ~ peek!(tag_s!("\n"))
+            , || OctoFragment::Comment(self.line_count, "".to_string())
+        )
+    );
+
 
     method!(pub comment<OctoParser, &str, OctoFragment>, self,
         chain!(
@@ -147,7 +158,7 @@ impl OctoParser {
                 | tag_s!("0B")
             )
             ~ digits: is_a_s!("01")
-            , || { println!("digits: {:?}", digits); isize::from_str_radix(digits, 2).unwrap() }
+            , || isize::from_str_radix(digits, 2).unwrap()
         )
     );
 
@@ -235,7 +246,7 @@ impl OctoParser {
     );
 
     method!(pub symbol<OctoParser, &str, &str>, self,
-        is_a_s!("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
+        is_a_s!("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-")
     );
 
     method!(pub alias<OctoParser, &str, OctoFragment>, mut self,
@@ -424,17 +435,23 @@ impl OctoParser {
         map!( call_m!(self.val), |v| OctoFragment::Literal(self.line_count, v) )
     );
 
+    method!(pub call<OctoParser, &str, OctoFragment>, mut self,
+        map!( call_m!(self.symbol), |s: &str| OctoFragment::Call(self.line_count, OctoDest::Symbol(s.to_string())) )
+    );
+
 
     method!(pub fragment<OctoParser, &str, OctoFragment>, mut self,
         alt_complete!(
             //call_m!(self.whitespace)
             call_m!(self.comment)
+            | call_m!(self.empty_comment)
             //| call_m!(self.newline)
             | call_m!(self.alias)
             | call_m!(self.label)
             | call_m!(self.assignment)
             | call_m!(self.statement)
             | call_m!(self.literal)
+            | call_m!(self.call)
         )
     );
 
