@@ -8,7 +8,10 @@ pub fn parse(input: &str) -> Vec<OctoFragment> {
 
     let parse = OctoParser::new();
 
+
     let w: IResult<&str, Vec<OctoFragment>> = parse.program(input).1; //program is a nom function
+
+    println!("Total Lines: {}", parse.line_count() );
 
     if let IResult::Done(x, result) = w {
          println!("Done: x: {:?} result: {:?}", x, result);
@@ -22,6 +25,10 @@ pub fn parse(input: &str) -> Vec<OctoFragment> {
         panic!("parse error");
     }
 }
+
+pub type LineNumber = usize;
+
+
 
 #[derive(Debug, PartialEq)]
 pub enum OctoSrc {
@@ -40,29 +47,47 @@ pub enum OctoAssignment {
     Store(OctoDest, OctoSrc),
     StoreRandom(OctoDest, usize),
     StoreHex(OctoDest, OctoSrc),
-    Add(OctoDest, OctoSrc, OctoSrc),
-    Sub(OctoDest, OctoSrc, OctoSrc),
-    Or(OctoDest, OctoSrc, OctoSrc),
-    And(OctoDest, OctoSrc, OctoSrc),
-    Xor(OctoDest, OctoSrc, OctoSrc),
+    Add(OctoDest, OctoSrc),
+    Sub(OctoDest, OctoSrc),
+    Or(OctoDest,  OctoSrc),
+    And(OctoDest, OctoSrc),
+    Xor(OctoDest, OctoSrc),
     Shr(OctoDest, OctoSrc),
     Shl(OctoDest, OctoSrc),
 }
 
 #[derive(Debug, PartialEq)]
-pub enum OctoFragment {
-    Whitespace(String),
-    Newline,
-    Comment(String),
-    Codeblock(Vec<OctoFragment>),
-    Alias(OctoDest, String),
-    Const(usize, String),
-    Label(String),
+pub enum OctoConditionalExpr {
+    CondEq(OctoSrc, OctoSrc),
+    CondNotEq(OctoSrc, OctoSrc),
+    CondKey(OctoSrc),
+    CondNotKey(OctoSrc),
+}
+
+
+#[derive(Debug, PartialEq)]
+pub enum OctoStatement {
+    Sprite(OctoSrc, OctoSrc, OctoSrc),
+    Loop,
+    Again,
+    If(OctoConditionalExpr),
     Assignment(OctoAssignment),
 }
 
+#[derive(Debug, PartialEq)]
+pub enum OctoFragment {
+    Comment(LineNumber, String),
+    //Codeblock(Vec<OctoFragment>),
+    Alias(LineNumber, OctoDest, String),
+    Const(LineNumber, isize, String),
+    Label(LineNumber, String),
+    Literal(LineNumber, isize),
+    Statement(LineNumber, OctoStatement),
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub struct OctoParser {
-    line_count: usize,
+    pub line_count: usize,
 }
 
 impl OctoParser {
@@ -71,7 +96,11 @@ impl OctoParser {
         OctoParser { line_count: 0 }
     }
 
-    method!(pub whitespace<OctoParser, &str, &str>, mut self,
+    pub fn line_count(&self) -> usize {
+        self.line_count
+    }
+
+    method!(pub whitespace<OctoParser, &str, &str>, self,
         is_a_s!( " \t\r" )
     );
 
@@ -82,11 +111,11 @@ impl OctoParser {
         )
     );
 
-    method!(pub comment<OctoParser, &str, OctoFragment>, mut self,
+    method!(pub comment<OctoParser, &str, OctoFragment>, self,
         chain!(
             tag_s!("#")
             ~ s: is_not_s!("\n")
-            , || OctoFragment::Comment(s.to_string())
+            , || OctoFragment::Comment(self.line_count, s.to_string())
         )
     );
 
@@ -95,11 +124,11 @@ impl OctoParser {
     );
 
 
-    method!(pub hex_digit_as_isize<OctoParser, &str, isize>, mut self,
+    method!(pub hex_digit_as_isize<OctoParser, &str, isize>, self,
         map_res!(hex_digit, FromStr::from_str)
     );
 
-    method!(pub hex_val<OctoParser, &str, isize>, mut self,
+    method!(pub hex_val<OctoParser, &str, isize>, self,
         chain!(
             alt_complete!(
                 tag_s!("0x")
@@ -111,7 +140,7 @@ impl OctoParser {
     );
 
 
-    method!(pub bin_val<OctoParser, &str, isize>, mut self,
+    method!(pub bin_val<OctoParser, &str, isize>, self,
         chain!(
             alt_complete!(
                 tag_s!("0b")
@@ -122,7 +151,7 @@ impl OctoParser {
         )
     );
 
-    method!(pub neg_val<OctoParser, &str, isize>, mut self,
+    method!(pub neg_val<OctoParser, &str, isize>, self,
         chain!(
             tag_s!("-")
             ~ val: map_res!(digit, isize::from_str)
@@ -130,7 +159,7 @@ impl OctoParser {
         )
     );
 
-    method!(pub dec_val<OctoParser, &str, isize>, mut self,
+    method!(pub dec_val<OctoParser, &str, isize>, self,
         map_res!( digit, FromStr::from_str )
     );
 
@@ -143,7 +172,7 @@ impl OctoParser {
         )
     );
 
-    method!(pub dest_i<OctoParser, &str, OctoDest>, mut self,
+    method!(pub dest_i<OctoParser, &str, OctoDest>, self,
         chain!(
             alt!( tag_s!("i") | tag_s!("I") )
             , || OctoDest::Chip8(Dest::I)
@@ -201,11 +230,11 @@ impl OctoParser {
             tag_s!(":")
             ~ call_m!(self.whitespace)
             ~ name: call_m!(self.symbol)
-            , || OctoFragment::Label(name.to_string())
+            , || OctoFragment::Label(self.line_count, name.to_string())
         )
     );
 
-    method!(pub symbol<OctoParser, &str, &str>, mut self,
+    method!(pub symbol<OctoParser, &str, &str>, self,
         is_a_s!("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_")
     );
 
@@ -216,7 +245,7 @@ impl OctoParser {
             ~ ident: call_m!(self.symbol)
             ~ call_m!(self.whitespace)
             ~ r: call_m!(self.dest_reg)
-            , || OctoFragment::Alias(r, ident.to_string())
+            , || OctoFragment::Alias(self.line_count, r, ident.to_string())
         )
     );
 
@@ -239,15 +268,160 @@ impl OctoParser {
     );
 
 
-    method!(pub assignment<OctoParser, &str, OctoFragment>, mut self,
+    method!(pub assignment_add<OctoParser, &str, OctoFragment>, mut self,
+        chain!(
+            dest: call_m!(self.lhs)
+            ~ call_m!(self.whitespace)
+            ~ tag_s!("+=")
+            ~ call_m!(self.whitespace)
+            ~ src: call_m!(self.rhs)
+            , || OctoFragment::Statement(self.line_count, OctoStatement::Assignment(OctoAssignment::Add(dest, src)))
+        )
+    );
+
+
+    method!(pub assignment_store<OctoParser, &str, OctoFragment>, mut self,
         chain!(
             dest: call_m!(self.lhs)
             ~ call_m!(self.whitespace)
             ~ tag_s!(":=")
             ~ call_m!(self.whitespace)
             ~ src: call_m!(self.rhs)
-            , || OctoFragment::Assignment(OctoAssignment::Store(dest, src))
+            , || OctoFragment::Statement(self.line_count, OctoStatement::Assignment(OctoAssignment::Store(dest, src)))
         )
+    );
+
+    method!(pub assignment<OctoParser, &str, OctoFragment>, mut self,
+        alt_complete!(
+            call_m!(self.assignment_store)
+            | call_m!(self.assignment_add)
+        )
+    );
+
+
+    method!(pub sprite<OctoParser, &str, OctoFragment>, mut self,
+        chain!(
+            alt!( tag_s!("s") | tag_s!("S") )
+            ~ alt!( tag_s!("p") | tag_s!("P") )
+            ~ alt!( tag_s!("r") | tag_s!("R") )
+            ~ alt!( tag_s!("i") | tag_s!("I") )
+            ~ alt!( tag_s!("t") | tag_s!("T") )
+            ~ alt!( tag_s!("e") | tag_s!("E") )
+            ~ call_m!( self.whitespace )
+            ~ x: alt!( call_m!(self.src_reg) | call_m!(self.src_symbol) )
+            ~ call_m!(self.whitespace)
+            ~ y: alt!( call_m!(self.src_reg) | call_m!(self.src_symbol) )
+            ~ call_m!(self.whitespace)
+            ~ n: call_m!(self.src_val)
+            , || OctoFragment::Statement(self.line_count, OctoStatement::Sprite(x, y, n))
+        )
+    );
+
+    method!(pub loopstmt<OctoParser, &str, OctoFragment>, self,
+        chain!(
+            alt!( tag_s!("l") | tag_s!("L") )
+            ~ alt!( tag_s!("o") | tag_s!("O") )
+            ~ alt!( tag_s!("o") | tag_s!("O") )
+            ~ alt!( tag_s!("p") | tag_s!("P") )
+            , || OctoFragment::Statement(self.line_count, OctoStatement::Loop)
+        )
+    );
+
+    method!(pub againstmt<OctoParser, &str, OctoFragment>, self,
+        chain!(
+            alt!( tag_s!("a") | tag_s!("A") )
+            ~ alt!( tag_s!("g") | tag_s!("G") )
+            ~ alt!( tag_s!("a") | tag_s!("A") )
+            ~ alt!( tag_s!("i") | tag_s!("I") )
+            ~ alt!( tag_s!("n") | tag_s!("N") )
+            , || OctoFragment::Statement(self.line_count, OctoStatement::Again)
+        )
+    );
+
+
+    method!(pub cond_eq<OctoParser, &str, OctoConditionalExpr>, mut self,
+        chain!(
+            lhs: alt!( call_m!(self.src_reg) | call_m!(self.src_symbol) )
+            ~ call_m!(self.whitespace)
+            ~ tag_s!("==")
+            ~ call_m!(self.whitespace)
+            ~ rhs: alt!( call_m!(self.src_val) | call_m!(self.src_symbol) )
+            , || OctoConditionalExpr::CondEq(lhs, rhs)
+        )
+    );
+
+    method!(pub cond_noteq<OctoParser, &str, OctoConditionalExpr>, mut self,
+        chain!(
+            lhs: alt!( call_m!(self.src_reg) | call_m!(self.src_symbol) )
+            ~ call_m!(self.whitespace)
+            ~ tag_s!("!=")
+            ~ call_m!(self.whitespace)
+            ~ rhs: alt!( call_m!(self.src_val) | call_m!(self.src_symbol) )
+            , || OctoConditionalExpr::CondNotEq(lhs, rhs)
+        )
+    );
+
+    method!(pub cond_key<OctoParser, &str, OctoConditionalExpr>, mut self,
+        chain!(
+            key: alt!( call_m!(self.src_reg) | call_m!(self.src_symbol) )
+            ~ call_m!(self.whitespace)
+            ~ alt!( tag_s!("k") | tag_s!("K") )
+            ~ alt!( tag_s!("e") | tag_s!("E") )
+            ~ alt!( tag_s!("y") | tag_s!("Y") )
+            , || OctoConditionalExpr::CondKey(key)
+        )
+    );
+
+    method!(pub cond_notkey<OctoParser, &str, OctoConditionalExpr>, mut self,
+        chain!(
+            key: alt!( call_m!(self.src_reg) | call_m!(self.src_symbol) )
+            ~ call_m!(self.whitespace)
+            ~ tag_s!("-")
+            ~ alt!( tag_s!("k") | tag_s!("K") )
+            ~ alt!( tag_s!("e") | tag_s!("E") )
+            ~ alt!( tag_s!("y") | tag_s!("Y") )
+            , || OctoConditionalExpr::CondNotKey(key)
+        )
+    );
+
+
+    method!(pub conditional_expr<OctoParser, &str, OctoConditionalExpr>, mut self,
+        alt_complete!(
+            call_m!(self.cond_eq)
+            | call_m!(self.cond_noteq)
+            | call_m!(self.cond_key)
+            | call_m!(self.cond_notkey)
+        )
+    );
+
+    method!(pub ifstmt<OctoParser, &str, OctoFragment>, mut self,
+        chain!(
+            alt!( tag_s!("i") | tag_s!("I") )
+            ~ alt!( tag_s!("f") | tag_s!("F") )
+            ~ call_m!(self.whitespace)
+            ~ cond: call_m!(self.conditional_expr)
+            ~ call_m!(self.whitespace)
+            ~ alt!( tag_s!("t") | tag_s!("T") )
+            ~ alt!( tag_s!("h") | tag_s!("H") )
+            ~ alt!( tag_s!("e") | tag_s!("E") )
+            ~ alt!( tag_s!("n") | tag_s!("N") )
+            , || OctoFragment::Statement(self.line_count, OctoStatement::If(cond))
+        )
+    );
+
+
+    method!(pub statement<OctoParser, &str, OctoFragment>, mut self,
+        alt_complete!(
+            call_m!(self.sprite)
+            | call_m!(self.loopstmt)
+            | call_m!(self.againstmt)
+            | call_m!(self.ifstmt)
+        )
+    );
+
+
+    method!(pub literal<OctoParser, &str, OctoFragment>, mut self,
+        map!( call_m!(self.val), |v| OctoFragment::Literal(self.line_count, v) )
     );
 
 
@@ -259,6 +433,8 @@ impl OctoParser {
             | call_m!(self.alias)
             | call_m!(self.label)
             | call_m!(self.assignment)
+            | call_m!(self.statement)
+            | call_m!(self.literal)
         )
     );
 

@@ -46,10 +46,20 @@ fn main() {
     \
 ";
     let fragments = parse(data_to_parse);
+    let lines = data_to_parse.split("\n");
+
     println!("\n\n");
+
+
+    for (n, l) in lines.enumerate() {
+        println!("{}: {}", n, l);
+    }
+
     for fragment in  fragments {
         println!("{:?}", fragment);
     }
+
+
 
 
 }
